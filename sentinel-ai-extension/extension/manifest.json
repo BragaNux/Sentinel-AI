@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "Sentinel AI",
+  "version": "1.0",
+  "description": "Detecta se o texto selecionado foi gerado por IA ou humano.",
+  "permissions": [
+    "contextMenus",
+    "activeTab",
+    "scripting",
+    "storage",
+    "notifications",
+    "clipboardWrite",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "js/background.js"
+  },
+  "action": {
+    "default_popup": "html/popup.html",
+    "default_icon": {
+      "16": "icons/16x16.png",
+      "32": "icons/32x32.png"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "icons/*",
+        "css/*",
+        "js/*",
+        "html/*"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "icons": {
+    "16": "icons/16x16.png",
+    "48": "icons/48x48.png",
+    "128": "icons/128x128.png"
+  }
+}

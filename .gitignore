@@ -1,0 +1,14 @@
+# Global
+node_modules/
+dist/
+build/
+*.log
+.DS_Store
+
+# Environment and secrets
+**/.env
+**/.env.*
+
+# Project specific
+sentinel-ai-extension/backend/audit.log
+sentinel-ai-extension/backend/npm-debug.log
