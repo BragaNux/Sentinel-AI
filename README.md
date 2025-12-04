@@ -1,4 +1,4 @@
-# Sentinel AI — Guia de Apresentação e Uso
+# Sentinel AI
 
 Extensão MV3 para verificar autoria e risco de conteúdo (texto, links, imagens) com um backend local. Ideal para demonstrar em aula com um fluxo simples, visual e técnico.
 
@@ -51,17 +51,6 @@ Referência detalhada: `backend/docs/DOCKER.md`.
 - `Popup → Reanalisar` (usa o último texto armazenado)
 - `Histórico` com filtro por tipo e detalhes no overlay
 - `Exportar CSV` para compartilhar resultados
-
-## Roteiro de Apresentação (5–7 min)
-
-- Contexto: checagem de autoria e segurança de conteúdo acadêmico
-- Demonstração:
-  - Abrir popup e analisar um parágrafo colado manualmente
-  - Clicar em `Analisar URL` em uma notícia para ver risco e tags
-  - Abrir `Histórico`, mostrar detalhes, copiar JSON e exportar CSV
-- Técnica:
-  - Prompt estruturado, baixa temperatura e fallback de modelos
-  - Logs e rate limiting no backend
 
 ## Endpoints Principais
 
