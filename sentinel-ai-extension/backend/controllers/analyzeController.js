@@ -3,6 +3,7 @@ const { info, audit } = require('../utils/logger');
 const { buildPrompt, isImageUrl } = require('../utils/prompt');
 const { CACHE_TTL_MS } = require('../config');
 const gemini = require('../services/gemini');
+const { adjustRiskForDomain } = require('../utils/domainReputation');
 
 const { GEMINI_API_KEY } = process.env;
 const { MODEL_PROVIDER = 'gemini', OLLAMA_MODEL_NAME = 'llama3' } = process.env;
@@ -11,7 +12,11 @@ const { GEMINI_MODEL = 'gemini-2.5-pro-exp-03-25', GEMINI_TEMPERATURE = '0.2', G
 const cacheData = new Map();
 
 async function analyzeContent(text) {
-  if (!text || typeof text !== 'string' || !text.trim()) throw new Error('Texto inválido');
+  if (typeof text !== 'string') throw new Error('Entrada insuficiente: informe texto não vazio');
+  const t = text.trim();
+  if (!t) throw new Error('Entrada insuficiente: informe texto não vazio');
+  const alnumLen = t.replace(/[^a-zA-Z0-9çáéíóúàèìòùäëïöüÂÊÎÔÛÁÉÍÓÚÀÈÌÒÙÄËÏÖÜ]+/g, '').length;
+  if (alnumLen === 0) throw new Error('Entrada insuficiente: inclua caracteres alfanuméricos');
   if (!GEMINI_API_KEY && MODEL_PROVIDER === 'gemini') throw new Error('Chave GEMINI_API_KEY ausente');
   const key = text.trim();
   const cached = cacheData.get(key);
@@ -58,10 +63,17 @@ async function analyzeContent(text) {
   let cleanOutput = output;
   if (cleanOutput.startsWith('```json')) cleanOutput = cleanOutput.replace(/```json\s*/, '').replace(/```$/, '').trim();
   let json;
-  try { json = JSON.parse(cleanOutput); } catch { throw new Error('JSON inválido'); }
-  cacheData.set(key, { value: json, expiresAt: Date.now() + CACHE_TTL_MS });
-  audit('analyze_response', { provider: MODEL_PROVIDER, json });
-  return json;
+  try { json = JSON.parse(cleanOutput); } catch { throw new Error('Resposta inválida: o provedor não retornou JSON válido'); }
+  let finalJson = json;
+  try {
+    const isUrl = /^https?:\/\//i.test(text);
+    if (isUrl) {
+      finalJson = await adjustRiskForDomain(text, json);
+    }
+  } catch {}
+  cacheData.set(key, { value: finalJson, expiresAt: Date.now() + CACHE_TTL_MS });
+  audit('analyze_response', { provider: MODEL_PROVIDER, json: finalJson });
+  return finalJson;
 }
 
 async function analyzeGeneric(req, res) {
