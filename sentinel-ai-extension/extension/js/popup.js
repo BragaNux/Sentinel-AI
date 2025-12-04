@@ -20,7 +20,7 @@ function parseAIResponse(text) {
   }
 }
 
-function renderResult(result) {
+function renderResult(result, inputText) {
   if (!result || typeof result !== "object") return;
   const loadingEl = document.getElementById('loading');
   if (loadingEl) loadingEl.className = 'hidden';
@@ -54,10 +54,88 @@ function renderResult(result) {
     if (norm) riskEl.classList.add(norm);
     riskEl.classList.add('has-tooltip');
   }
-  riskEl.setAttribute('data-tooltip', result.reason || '');
-  document.getElementById("reason").textContent = result.reason || "Sem explicação.";
+  if (riskEl && typeof riskEl.setAttribute === 'function') {
+    riskEl.setAttribute('data-tooltip', result.reason || '');
+  }
+  const reasonEl = document.getElementById("reason");
+  function esc(s){ return String(s||'').replace(/[<>]/g,''); }
+  function friendly(result, inputText){
+    const kind = inputText ? detectType(inputText) : 'texto';
+    const tags = Array.isArray(result.tags) ? result.tags.map(t=>String(t)) : [];
+    const riskText = String(result.risk||'baixo');
+    const reason = String(result.reason||'');
+    if (kind === 'link') {
+      let host = '';
+      let https = false;
+      let redirectInfo = '';
+      let embed = false;
+      try {
+        const u = new URL(inputText);
+        host = u.hostname;
+        https = u.protocol === 'https:';
+        const params = new URLSearchParams(u.search);
+        const rkeys = ['redirect','redir','url','to','dest','destination','u','link'];
+        for (const k of rkeys) {
+          const v = params.get(k);
+          if (v && /^https?:\/\//i.test(v)) { try { redirectInfo = new URL(v).hostname; } catch { redirectInfo = v; } break; }
+        }
+      } catch {}
+      embed = /<iframe|<embed|<object/i.test(String(inputText||''));
+      const bullets = [];
+      if (host) bullets.push(`Domínio: ${host}`);
+      bullets.push(`Conexão: ${https ? 'HTTPS' : 'HTTP'}`);
+      if (redirectInfo) bullets.push(`Redireciona para: ${redirectInfo}`);
+      if (embed) bullets.push('Possível conteúdo incorporado');
+      if (tags.includes('domínio_confiável') || tags.includes('domínio confiável')) bullets.push('Reputação: confiável');
+      if (tags.includes('reputação_verificada')) bullets.push('Reputação verificada');
+      if (tags.includes('ssl_valido') || tags.includes('ssl válido')) bullets.push('Certificado SSL válido');
+      const intro = `Classificação: ${riskText}.`;
+      const tech = reason.split('Política')[0] || '';
+      const list = bullets.map(b=>`<li>${esc(b)}</li>`).join('');
+      const extra = tech ? `<li>${esc(tech)}</li>` : '';
+      const age = `<li>Idade do registro: não verificada</li>`;
+      return `<div>${esc(intro)}</div><ul>${age}${list}${extra}</ul>`;
+    }
+    if (kind === 'código') {
+      const intro = `Classificação: ${riskText}.`;
+      const tech = reason.split('Política')[0] || '';
+      const bullets = [];
+      if (tech) bullets.push(tech);
+      const styleTags = tags.filter(t => /estilo|simples|complexo/i.test(t)).slice(0,3);
+      styleTags.forEach(t => bullets.push(`Padrão: ${t}`));
+      return `<div>${esc(intro)}</div><ul>${bullets.map(b=>`<li>${esc(b)}</li>`).join('')}</ul>`;
+    }
+    if (/https?:\/\/[^\s]+\.(png|jpg|jpeg|gif|webp)/i.test(String(inputText||''))) {
+      const intro = `Classificação: ${riskText}.`;
+      const bullets = [];
+      const extMatch = String(inputText||'').match(/\.(png|jpg|jpeg|gif|webp)\b/i);
+      if (extMatch) bullets.push(`Formato: ${extMatch[1].toUpperCase()}`);
+      if (tags.includes('manipulação')) bullets.push('Possível manipulação visual');
+      if (tags.includes('texto embutido')) bullets.push('Texto embutido detectado');
+      bullets.push('Metadados não disponíveis para verificação local');
+      const tech = reason.split('Política')[0] || '';
+      if (tech) bullets.push(tech);
+      return `<div>${esc(intro)}</div><ul>${bullets.map(b=>`<li>${esc(b)}</li>`).join('')}</ul>`;
+    }
+    const intro = `Classificação: ${riskText}.`;
+    const bullets = [];
+    const t = String(inputText||'');
+    const patterns = [
+      { re: /\b(senha|password)\b/i, label:'Menciona senha' },
+      { re: /\b(clique aqui|click here)\b/i, label:'Chamada para clique' },
+      { re: /\b(urgente|imediato|agora)\b/i, label:'Urgência incomum' },
+      { re: /\b(verificar|confirmar)\s+(sua|a)\s+conta\b/i, label:'Solicita verificação de conta' },
+      { re: /\b(promoção|oferta|ganhe|grátis)\b/i, label:'Oferta promocional' }
+    ];
+    patterns.forEach(p => { if (p.re.test(t)) bullets.push(p.label); });
+    const tech = reason.split('Política')[0] || '';
+    if (tech) bullets.push(tech);
+    if (!bullets.length) bullets.push('Texto informativo sem sinais claros de phishing');
+    return `<div>${esc(intro)}</div><ul>${bullets.map(b=>`<li>${esc(b)}</li>`).join('')}</ul>`;
+  }
+  if (reasonEl) reasonEl.innerHTML = friendly(result, inputText);
   const prob = typeof result.probability === 'number' ? Math.max(0, Math.min(1, result.probability)) : null;
-  const bar = document.querySelector('.confidence-fill');
+  const bar = (typeof document.querySelector === 'function') ? document.querySelector('.confidence-fill') : null;
   const probText = document.getElementById('confidenceValue');
   if (bar && probText) {
     const pct = prob !== null ? Math.round(prob * 100) : 0;
@@ -78,16 +156,21 @@ function renderResult(result) {
 }
 
 function saveToHistory(text, result) {
-  const entry = {
-    text,
-    result,
-    type: detectType(text),
-    timestamp: new Date().toISOString()
-  };
-  chrome.storage.local.get({ history: [] }, (data) => {
-    const updated = [entry, ...data.history].slice(0, 30);
-    chrome.storage.local.set({ history: updated });
-    renderHistory(updated);
+  return new Promise((resolve) => {
+    const entry = {
+      text,
+      result,
+      type: detectType(text),
+      timestamp: new Date().toISOString()
+    };
+    chrome.storage.local.get({ history: [] }, (data) => {
+      const hist = Array.isArray(data.history) ? data.history : [];
+      const updated = [entry, ...hist].slice(0, 30);
+      chrome.storage.local.set({ history: updated }, () => {
+        try { renderHistory(updated); } catch {}
+        resolve(updated);
+      });
+    });
   });
 }
 
@@ -139,8 +222,8 @@ function renderHistory(entries) {
   document.getElementById("historyList").innerHTML = html;
 }
 
-function setLoading(isLoading) {
-  const ids = ["reanalyze", "analyzeCurrentUrl", "clearHistory", "copyResult", "exportCsv"];
+function setLoading(isLoading, durationMs = 8000) {
+  const ids = ["reanalyze", "analyzeCurrentUrl", "clearHistory", "copyResult", "exportCsv", "analyzeManual"];
   ids.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.disabled = isLoading;
@@ -155,7 +238,7 @@ function setLoading(isLoading) {
     clearTimeout(window.__sentinelLoadingTimer);
     window.__sentinelLoadingTimer = setTimeout(() => {
       try { setLoading(false); } catch {}
-    }, 8000);
+    }, durationMs);
   } else {
     clearTimeout(window.__sentinelLoadingTimer);
   }
@@ -175,7 +258,7 @@ document.getElementById("reanalyze").addEventListener("click", () => {
       return;
     }
 
-    setLoading(true);
+    setLoading(true, 20000);
     fetchWithTimeout("http://localhost:3000/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -185,7 +268,7 @@ document.getElementById("reanalyze").addEventListener("click", () => {
       .then(data => {
         const parsed = typeof data === "string" ? parseAIResponse(data) : data;
         if (parsed) {
-          renderResult(parsed);
+          renderResult(parsed, text);
           saveToHistory(text, parsed);
           chrome.storage.local.set({ lastAnalysis: parsed, lastText: text, lastUseAt: Date.now() });
         } else {
@@ -210,7 +293,7 @@ document.getElementById("analyzeCurrentUrl").addEventListener("click", () => {
       return;
     }
 
-    setLoading(true);
+    setLoading(true, 20000);
     fetchWithTimeout("http://localhost:3000/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -220,7 +303,7 @@ document.getElementById("analyzeCurrentUrl").addEventListener("click", () => {
       .then(data => {
         const parsed = typeof data === "string" ? parseAIResponse(data) : data;
         if (parsed) {
-          renderResult(parsed);
+          renderResult(parsed, url);
           saveToHistory(url, parsed);
           chrome.storage.local.set({ lastAnalysis: parsed, lastText: url, lastUseAt: Date.now() });
         } else {
@@ -295,9 +378,22 @@ document.addEventListener("DOMContentLoaded", () => {
     const text = data.lastText || "";
     if (result && text) {
       const parsed = typeof result === "string" ? parseAIResponse(result) : result;
-      if (parsed) renderResult(parsed);
+      if (parsed) {
+        renderResult(parsed, text);
+        try {
+          const entry = { text, result: parsed, type: detectType(text), timestamp: new Date().toISOString() };
+          const hist = Array.isArray(data.history) ? data.history : [];
+          const already = hist.length > 0 && hist[0] && hist[0].text === text && JSON.stringify(hist[0].result) === JSON.stringify(parsed);
+          if (!already) {
+            const updated = [entry, ...hist].slice(0, 30);
+            chrome.storage.local.set({ history: updated });
+          }
+        } catch {}
+      }
     }
-    renderHistory(data.history || []);
+    chrome.storage.local.get(["history"], (h) => {
+      renderHistory(h.history || []);
+    });
     if (!data.lastText) {
       const btn = document.getElementById("reanalyze");
       if (btn) btn.disabled = true;
@@ -355,37 +451,63 @@ document.getElementById("historyList").addEventListener("click", (e) => {
   }
 });
 
-document.getElementById("analyzeManual").addEventListener("click", () => {
+async function analyzeManualWithRetry(text, maxAttempts = 2) {
+  let attempt = 0;
+  let lastError;
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    try {
+      const res = await fetchWithTimeout("http://localhost:3000/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text })
+      }, 30000);
+      const data = await res.json();
+      const parsed = typeof data === "string" ? parseAIResponse(data) : data;
+      if (parsed && typeof parsed === 'object') {
+        renderResult(parsed, text);
+        await saveToHistory(text, parsed);
+        chrome.storage.local.set({ lastAnalysis: parsed, lastText: text, lastUseAt: Date.now() });
+        return parsed;
+      }
+      throw new Error("Resposta inválida.");
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxAttempts) {
+        document.getElementById("reason").textContent = `Erro (${attempt}/${maxAttempts - 1}). Tentando novamente...`;
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+  }
+  document.getElementById("reason").textContent = "Erro: " + (lastError?.message || "Falha");
+  showErrorOverlay(lastError?.message || "Falha na análise");
+  return null;
+}
+
+let __manualRunning = false;
+document.getElementById("analyzeManual").addEventListener("click", async () => {
   const btn = document.getElementById("analyzeManual");
+  if (btn && btn.disabled) return;
+  if (__manualRunning) return;
+  __manualRunning = true;
   btn.classList.add('ripple');
   const ta = document.getElementById("manualText");
   const text = (ta.value || "").trim();
   if (!text) {
     document.getElementById("reason").textContent = "Informe um texto para análise.";
+    __manualRunning = false;
     return;
   }
-  setLoading(true);
-  fetchWithTimeout("http://localhost:3000/analyze", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text })
-  }, 8000)
-    .then(res => res.json())
-    .then(data => {
-      const parsed = typeof data === "string" ? parseAIResponse(data) : data;
-      if (parsed) {
-        renderResult(parsed);
-        saveToHistory(text, parsed);
-        chrome.storage.local.set({ lastAnalysis: parsed, lastText: text, lastUseAt: Date.now() });
-      } else {
-        document.getElementById("reason").textContent = "Resposta inválida.";
-      }
-    })
-    .catch(err => {
-      document.getElementById("reason").textContent = "Erro: " + err.message;
-      showErrorOverlay(err.message);
-    })
-    .finally(() => setLoading(false));
+  const preview = text.length > 120 ? text.slice(0, 120) + '...' : text;
+  document.getElementById("reason").textContent = `Analisando: ${preview}`;
+  setLoading(true, 30000);
+  try { chrome.storage.local.set({ lastAnalysis: null, lastText: text }); } catch {}
+  try {
+    await analyzeManualWithRetry(text, 2);
+  } finally {
+    setLoading(false);
+    __manualRunning = false;
+  }
 });
 
 document.querySelectorAll('.tab').forEach(tab => {
@@ -439,7 +561,7 @@ document.getElementById('historyList').addEventListener('click', (e) => {
       <p><strong>Tipo:</strong> ${item.type}</p>
       <p><strong>Autor:</strong> ${r.author || 'N/A'}</p>
       <p><strong>Risco:</strong> ${r.risk || 'N/A'}</p>
-      <p><strong>Confiança:</strong> ${typeof r.probability === 'number' ? Math.round(Math.max(0, Math.min(1, r.probability)) * 100) + '%' : 'N/A'}</p>
+      <p><strong>Probabilidade de Risco:</strong> ${typeof r.probability === 'number' ? Math.round(Math.max(0, Math.min(1, r.probability)) * 100) + '%' : 'N/A'}</p>
       <p><strong>Tags:</strong> ${(Array.isArray(r.tags) ? r.tags : []).map(t => String(t)).join(', ')}</p>
       <p><strong>Justificativa:</strong> ${r.reason || ''}</p>
       <hr>
